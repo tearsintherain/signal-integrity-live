@@ -8,6 +8,7 @@ from detection_engine import (
     run_tests,
 )
 from ai_repair import ask_gemini, validate_patch
+from clickhouse_store import log_event, recent_runs
 
 
 st.set_page_config(
@@ -45,6 +46,33 @@ if "ai_error" not in st.session_state:
     st.session_state.ai_error = None
 if "diagnostic_mode" not in st.session_state:
     st.session_state.diagnostic_mode = None
+
+# Record initial baseline and regression once per Streamlit session.
+if not st.session_state.get("initial_audit_recorded", False):
+    baseline_passed = sum((
+        baseline_results["positive_test"]["passed"],
+        baseline_results["negative_test"]["passed"],
+    ))
+    regression_passed = sum((
+        regression_results["positive_test"]["passed"],
+        regression_results["negative_test"]["passed"],
+    ))
+    baseline_saved = log_event(
+        "baseline",
+        "PASS" if baseline_results["overall_passed"] else "FAIL",
+        baseline_passed,
+        2,
+        {"source": "synthetic demonstration events"},
+    )
+    regression_saved = log_event(
+        "schema_drift",
+        "REGRESSION_REPRODUCED" if not regression_results["overall_passed"] else "NOT_REPRODUCED",
+        regression_passed,
+        2,
+        {"changed_field": "process_name -> process.executable"},
+    )
+    st.session_state.initial_audit_recorded = True
+    st.session_state.audit_storage_available = baseline_saved and regression_saved
 
 
 # Top-level status indicators.
@@ -161,6 +189,13 @@ if st.button(
             )
             st.session_state.diagnosis = diagnosis
             st.session_state.diagnostic_mode = "AI"
+            saved = log_event(
+                "diagnosis", "AI_PROPOSED", 0, 0,
+                {"root_cause": str(diagnosis.get("root_cause", ""))[:1000]},
+            )
+            st.session_state.audit_storage_available = (
+                saved and st.session_state.get("audit_storage_available", True)
+            )
         except Exception as exc:
             st.session_state.ai_error = (
                 f"{type(exc).__name__}: {exc}"
@@ -221,6 +256,13 @@ if st.session_state.ai_error:
             ],
         }
         st.session_state.diagnostic_mode = "MANUAL FALLBACK"
+        saved = log_event(
+            "diagnosis", "MANUAL_FALLBACK", 0, 0,
+            {"source": "application-provided fallback; not AI-generated"},
+        )
+        st.session_state.audit_storage_available = (
+            saved and st.session_state.get("audit_storage_available", True)
+        )
         st.session_state.repair_results = None
         st.rerun()
 
@@ -253,6 +295,24 @@ if diagnosis:
 
             st.session_state.repair_results = results
             st.session_state.repaired_rule = repaired_rule
+            tests_passed = sum((
+                results["positive_test"]["passed"],
+                results["negative_test"]["passed"],
+            ))
+            saved = log_event(
+                "repair_verification",
+                "PASS" if results["overall_passed"] else "FAIL",
+                tests_passed,
+                2,
+                {
+                    "proposal_source": mode,
+                    "repaired_rule": repaired_rule,
+                    "alerted_event_ids": results.get("alerted_event_ids", []),
+                },
+            )
+            st.session_state.audit_storage_available = (
+                saved and st.session_state.get("audit_storage_available", True)
+            )
 
         except Exception as exc:
             st.error(
@@ -295,6 +355,23 @@ else:
     )
 
 st.divider()
+
+st.header("05 · Persistent audit history")
+st.caption(
+    "Recent events stored in ClickHouse. Test data is synthetic; "
+    "audit history does not establish production security effectiveness."
+)
+
+history = recent_runs(limit=25)
+if history is None:
+    st.warning(
+        "ClickHouse audit history is currently unavailable. "
+        "The detection demo can continue without persistence."
+    )
+elif history:
+    st.dataframe(history, use_container_width=True, hide_index=True)
+else:
+    st.info("No audit events are available yet.")
 
 st.caption(
     "Prototype demonstration · Synthetic events · "
