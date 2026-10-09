@@ -356,7 +356,89 @@ else:
 
 st.divider()
 
-st.header("05 · Persistent audit history")
+# Stage 5: Demonstrate rejection of an unsafe detection repair.
+st.header("05 · Repair safety challenge")
+
+st.markdown(
+    """
+    A repair is not safe merely because it detects the intended event.
+    This challenge deliberately proposes an overbroad rule that matches
+    every process-start event. The same deterministic tests must reject it
+    because it also alerts on benign events.
+
+    This is a local, synthetic challenge. It makes no Gemini API request.
+    """
+)
+
+if st.button("Run unsafe-repair challenge", key="run_unsafe_repair"):
+    unsafe_rule = {
+        **DETECTION_RULE,
+        "expected_field": "event_type",
+        "expected_value": "process_start",
+    }
+
+    unsafe_results = run_tests(changed_events, unsafe_rule)
+
+    st.session_state.unsafe_repair_results = unsafe_results
+    st.session_state.unsafe_repair_rule = unsafe_rule
+
+    tests_passed = sum((
+        unsafe_results["positive_test"]["passed"],
+        unsafe_results["negative_test"]["passed"],
+    ))
+
+    saved = log_event(
+        "unsafe_repair_challenge",
+        "REJECTED" if not unsafe_results["overall_passed"] else "UNEXPECTED_PASS",
+        tests_passed,
+        2,
+        {
+            "scenario": "deliberately overbroad rule",
+            "candidate_rule": unsafe_rule,
+            "alerted_event_ids": unsafe_results["alerted_event_ids"],
+            "verification_passed": unsafe_results["overall_passed"],
+        },
+    )
+
+    st.session_state.audit_storage_available = (
+        saved and st.session_state.get("audit_storage_available", True)
+    )
+
+if st.session_state.get("unsafe_repair_results") is not None:
+    unsafe_results = st.session_state.unsafe_repair_results
+
+    st.subheader("Deliberately unsafe candidate")
+    st.json(st.session_state.unsafe_repair_rule)
+
+    challenge_col1, challenge_col2 = st.columns(2)
+
+    with challenge_col1:
+        st.write("Positive test")
+        st.json(unsafe_results["positive_test"])
+
+    with challenge_col2:
+        st.write("Negative test")
+        st.json(unsafe_results["negative_test"])
+
+    st.write("Events that triggered:", unsafe_results["alerted_event_ids"])
+
+    if unsafe_results["overall_passed"]:
+        st.error(
+            "UNEXPECTED RESULT: the unsafe candidate passed. "
+            "Investigate before presenting the challenge."
+        )
+    else:
+        st.error(
+            "REPAIR REJECTED: the candidate triggers on benign events. "
+            "Detection alone is insufficient; the negative test must also pass."
+        )
+
+    with st.expander("Complete unsafe-repair test report"):
+        st.json(unsafe_results)
+
+st.divider()
+
+st.header("06 · Persistent audit history")
 st.caption(
     "Recent events stored in ClickHouse. Test data is synthetic; "
     "audit history does not establish production security effectiveness."
