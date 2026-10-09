@@ -3,3 +3,10 @@
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
+
+# Local backups and pre-change snapshots
+.env.backup-*
+*.bak
+*.backup-*
+*.pre-*
+*.before-*

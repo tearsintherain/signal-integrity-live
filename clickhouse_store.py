@@ -14,15 +14,34 @@ load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 def _client():
     import clickhouse_connect
 
-    return clickhouse_connect.get_client(
-        host=os.getenv("CLICKHOUSE_HOST", "127.0.0.1"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        username=os.environ["CLICKHOUSE_USER"],
-        password=os.environ["CLICKHOUSE_PASSWORD"],
-        database=os.getenv("CLICKHOUSE_DB", "signal_integrity"),
-        connect_timeout=2,
-        send_receive_timeout=3,
-    )
+    mode = os.getenv("CLICKHOUSE_MODE", "local").strip().lower()
+
+    if mode == "cloud":
+        return clickhouse_connect.get_client(
+            host=os.environ["CLICKHOUSE_CLOUD_HOST"].strip(),
+            port=int(os.getenv("CLICKHOUSE_CLOUD_PORT", "8443")),
+            secure=True,
+            username=os.environ["CLICKHOUSE_CLOUD_USER"],
+            password=os.environ["CLICKHOUSE_CLOUD_PASSWORD"],
+            database=os.getenv("CLICKHOUSE_CLOUD_DB", "signal_integrity"),
+            connect_timeout=10,
+            send_receive_timeout=15,
+        )
+
+    if mode == "local":
+        return clickhouse_connect.get_client(
+            host=os.getenv("CLICKHOUSE_HOST", "127.0.0.1"),
+            port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
+            secure=os.getenv("CLICKHOUSE_SECURE", "false").lower()
+                in {"1", "true", "yes"},
+            username=os.environ["CLICKHOUSE_USER"],
+            password=os.environ["CLICKHOUSE_PASSWORD"],
+            database=os.getenv("CLICKHOUSE_DB", "signal_integrity"),
+            connect_timeout=2,
+            send_receive_timeout=5,
+        )
+
+    raise ValueError("CLICKHOUSE_MODE must be 'cloud' or 'local'")
 
 
 def log_event(stage, status, tests_passed=0, tests_total=0, details=None):
